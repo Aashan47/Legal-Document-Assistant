@@ -1,0 +1,49 @@
+SAMPLE NON-DISCLOSURE AGREEMENT
+
+This Non-Disclosure Agreement ("Agreement") is entered into on [DATE] by and between [COMPANY NAME], a [STATE] corporation ("Disclosing Party"), and [RECIPIENT NAME] ("Receiving Party").
+
+1. CONFIDENTIAL INFORMATION
+For purposes of this Agreement, "Confidential Information" shall include all information or data disclosed by the Disclosing Party to the Receiving Party, including but not limited to:
+- Technical data, trade secrets, know-how, research, product plans
+- Financial information, business plans, customer lists
+- Software, source code, object code, documentation
+- Any other proprietary information marked as confidential
+
+2. OBLIGATIONS OF RECEIVING PARTY
+The Receiving Party agrees to:
+a) Hold all Confidential Information in strict confidence
+b) Not disclose Confidential Information to any third parties
+c) Use Confidential Information solely for evaluation purposes
+d) Take reasonable security measures to protect the information
+
+3. TERM AND TERMINATION
+This Agreement shall remain in effect for a period of THREE (3) YEARS from the date of execution, unless terminated earlier by either party with thirty (30) days written notice.
+
+4. LIABILITY AND DAMAGES
+The Receiving Party acknowledges that disclosure of Confidential Information would cause irreparable harm to the Disclosing Party. Therefore, the Disclosing Party shall be entitled to seek injunctive relief and monetary damages.
+
+Liquidated damages for breach of this Agreement shall be $100,000 per incident, in addition to any other remedies available at law or equity.
+
+5. GOVERNING LAW
+This Agreement shall be governed by the laws of the State of California, without regard to conflict of law principles.
+
+6. DISPUTE RESOLUTION
+Any disputes arising under this Agreement shall be resolved through binding arbitration in San Francisco, California, under the rules of the American Arbitration Association.
+
+7. INTELLECTUAL PROPERTY
+All intellectual property rights in the Confidential Information shall remain with the Disclosing Party. No license or rights are granted to the Receiving Party except as expressly stated herein.
+
+8. RETURN OF MATERIALS
+Upon termination of this Agreement, the Receiving Party shall promptly return or destroy all materials containing Confidential Information.
+
+9. SURVIVAL
+The obligations set forth in Sections 2, 4, 5, 6, 7, and 8 shall survive termination of this Agreement.
+
+IN WITNESS WHEREOF, the parties have executed this Agreement as of the date first written above.
+
+DISCLOSING PARTY:                    RECEIVING PARTY:
+
+_____________________               _____________________
+[Name]                              [Name]
+[Title]                             [Title]
+[Company]                           [Date]
