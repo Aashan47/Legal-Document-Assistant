@@ -20,9 +20,11 @@ accelerate==0.24.1
 # LLM integration
 openai==1.3.7
 
+
+
 # Data handling
+numpy>=1.26.0,<1.27
 pandas==2.1.3
-numpy==1.24.3
 datasets==2.14.6
 
 # Monitoring and logging
