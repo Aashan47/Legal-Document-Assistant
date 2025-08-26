@@ -7,8 +7,10 @@ from typing import List, Dict, Any, Optional, Tuple
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
-from langchain.schema import Document
-from src.core.config import settings
+try:
+    from src.core.config import settings
+except ImportError:
+    from src.core.cloud_config import settings
 from src.utils.logging import app_logger
 
 

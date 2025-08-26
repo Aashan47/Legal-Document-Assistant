@@ -13,12 +13,19 @@ import time
 # Add src to Python path
 sys.path.append(str(Path(__file__).parent / "src"))
 
-# Import core modules
-from core.vector_db import VectorDatabase
-from core.rag import RAGPipeline
-from data.processor import DocumentProcessor
-from models.model_config import AVAILABLE_MODELS
-from utils.logging import app_logger
+# Import core modules with fallbacks
+try:
+    from core.vector_db import VectorDatabase
+    from core.rag import RAGPipeline
+    from data.processor import DocumentProcessor
+    from models.model_config import AVAILABLE_MODELS
+    from utils.logging import app_logger
+except ImportError as e:
+    st.error(f"Import error: {e}")
+    # Create simple logger fallback
+    import logging
+    app_logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO)
 
 # Page configuration
 st.set_page_config(
