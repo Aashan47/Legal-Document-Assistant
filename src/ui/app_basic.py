@@ -8,7 +8,7 @@ from typing import List, Dict, Any
 
 # Page configuration
 st.set_page_config(
-    page_title="Legal Document Analyzer",
+    page_title="Legal Assistant for Documents",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -103,8 +103,8 @@ def main():
     """Main Streamlit application."""
     
     # Title and description
-    st.title("⚖️ Legal Document Analyzer")
-    st.markdown("*AI-powered analysis of legal contracts using RAG and LLMs*")
+    st.title("⚖️ Legal Assistant for Documents")
+    st.markdown("*AI-powered analysis of your legal contracts*")
     
     # Check API health
     api_healthy = check_api_health()
@@ -114,7 +114,7 @@ def main():
         st.code('python -m uvicorn src.api.main_basic:app --host localhost --port 8000', language="bash")
         return
     
-    st.success("✅ API server is running")
+    # st.success("✅ API server is running")
     
     # Get API info
     try:

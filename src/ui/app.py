@@ -11,6 +11,7 @@ from pathlib import Path
 
 from src.core.config import settings
 from src.utils.logging import app_logger
+from src.models.model_config import AVAILABLE_MODELS, get_recommended_model, ModelConfig
 
 
 # Page configuration
@@ -54,17 +55,24 @@ def upload_documents(files: List) -> Dict[str, Any]:
         return {}
 
 
-def query_documents(question: str, top_k: int = 5) -> Dict[str, Any]:
-    """Query the document knowledge base."""
+def query_documents(question: str, top_k: int = 5, model_name: str = None) -> Dict[str, Any]:
+    """Query the document knowledge base with optional model selection."""
     try:
+        payload = {"question": question, "top_k": top_k}
+        if model_name:
+            payload["model_name"] = model_name
+            
         response = requests.post(
             f"{API_BASE_URL}/query",
-            json={"question": question, "top_k": top_k},
-            timeout=30
+            json=payload,
+            timeout=120  # Increased timeout for complex legal analysis
         )
         response.raise_for_status()
         return response.json()
         
+    except requests.exceptions.Timeout:
+        st.error("⏳ Request timed out. The model is processing a complex legal analysis. Please try a shorter question or wait for the system to optimize.")
+        return {}
     except Exception as e:
         st.error(f"Error querying documents: {str(e)}")
         return {}
@@ -109,12 +117,20 @@ def clear_knowledge_base():
 def main():
     """Main Streamlit application."""
     
+    # Initialize session state for chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "api_healthy" not in st.session_state:
+        st.session_state.api_healthy = False
+    
     # Title and description
     st.title("⚖️ Legal Document Analyzer")
     st.markdown("*AI-powered analysis of legal contracts using RAG and LLMs*")
     
     # Check API health
     api_healthy = check_api_health()
+    st.session_state.api_healthy = api_healthy
+    
     if not api_healthy:
         st.error("🚨 API server is not running. Please start the FastAPI server first.")
         st.markdown(f"Expected API at: `{API_BASE_URL}`")
@@ -133,26 +149,106 @@ def main():
         if stats:
             st.metric("Documents", stats.get("total_documents", 0))
             st.metric("Vector Dimension", stats.get("embedding_dimension", 0))
-            st.metric("Queries Made", stats.get("query_count", 0))
+            st.metric("Chat Messages", len(st.session_state.chat_history))
             if stats.get("query_count", 0) > 0:
                 confidence = stats.get("average_confidence", 0)
                 st.metric("Avg Confidence", f"{confidence:.2f}")
         
-        # Clear knowledge base
+        # Clear options
         st.subheader("🗑️ Management")
-        if st.button("Clear Knowledge Base", type="secondary"):
-            if clear_knowledge_base():
-                st.success("Knowledge base cleared!")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Clear Chat", type="secondary"):
+                st.session_state.chat_history = []
                 st.rerun()
+        with col2:
+            if st.button("Clear DB", type="secondary"):
+                if clear_knowledge_base():
+                    st.success("Knowledge base cleared!")
+                    st.rerun()
         
         # Configuration
         st.subheader("⚙️ Configuration")
-        st.write(f"**Model**: {settings.default_llm}")
+        
+        # Model Selection
+        st.markdown("**🤖 AI Model Selection**")
+        
+        # Initialize selected model in session state
+        if "selected_model" not in st.session_state:
+            st.session_state.selected_model = "flan-t5-large"  # Use the key, not the model_id
+        
+        # Create model options for selectbox
+        model_options = {}
+        for model_key, config in AVAILABLE_MODELS.items():
+            # Create a descriptive label
+            label = f"{config.name} - {config.description[:50]}..."
+            model_options[label] = model_key  # Use the key, not model_id
+        
+        # Model selection dropdown
+        selected_label = st.selectbox(
+            "Choose AI Model:",
+            options=list(model_options.keys()),
+            index=list(model_options.values()).index(st.session_state.selected_model),
+            help="Select the AI model for analyzing your legal documents"
+        )
+        
+        # Update session state
+        st.session_state.selected_model = model_options[selected_label]
+        
+        # Show model details
+        selected_config = AVAILABLE_MODELS[st.session_state.selected_model]
+        st.markdown(f"**Strengths**: {selected_config.strengths}")
+        st.markdown(f"**Best for**: {selected_config.best_for}")
+        
+        # Show performance metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Speed", f"{selected_config.speed}/5", help="Response speed rating")
+        with col2:
+            st.metric("Quality", f"{selected_config.quality}/5", help="Response quality rating")
+        with col3:
+            st.metric("Size", f"{selected_config.size}/5", help="Model size (higher = more resource intensive)")
+        
+        st.divider()
+        
+        # Model Cache Status
+        st.markdown("**🚀 Model Cache Status**")
+        try:
+            from src.models.model_manager import get_model_manager
+            manager = get_model_manager()
+            cache_info = manager.get_cache_info()
+            
+            # Show cache status
+            cached_count = cache_info['total_cached']
+            total_count = cache_info['total_available']
+            
+            if cached_count == total_count:
+                st.success(f"✅ All {total_count} models cached - Instant switching enabled!")
+            elif cached_count > 0:
+                st.warning(f"⚠️ {cached_count}/{total_count} models cached")
+            else:
+                st.error("❌ No models cached - First load will be slower")
+            
+            if cached_count > 0:
+                st.write(f"💾 Cache size: {cache_info['total_size_gb']:.1f} GB")
+                
+            # Show preload button if not all cached
+            if cached_count < total_count:
+                st.info("💡 Run `python preload_models.py` to cache all models for instant switching")
+                
+        except Exception as e:
+            st.warning("⚠️ Cache status unavailable")
+        
+        st.divider()
+        
+        # Other configuration info
+        st.markdown("**System Settings**")
+        st.write(f"**LLM Type**: {settings.default_llm}")
         st.write(f"**Chunk Size**: {settings.chunk_size}")
         st.write(f"**Temperature**: {settings.llm_temperature}")
     
     # Main content tabs
-    tab1, tab2, tab3 = st.tabs(["📄 Document Upload", "🔍 Query Documents", "📈 Query History"])
+    tab1, tab2, tab3 = st.tabs(["📄 Document Upload", "� Chat with Documents", "📈 Query History"])
     
     with tab1:
         st.header("📄 Upload Legal Documents")
@@ -192,8 +288,49 @@ def main():
                         st.rerun()
     
     with tab2:
-        st.header("🔍 Query Legal Documents")
-        st.markdown("Ask natural language questions about your uploaded legal documents.")
+        st.header("� Chat with Legal Documents")
+        st.markdown("Ask questions about your uploaded legal documents. Your chat history is maintained throughout the session.")
+        
+        # Display chat history
+        chat_container = st.container()
+        with chat_container:
+            if st.session_state.chat_history:
+                for i, message in enumerate(st.session_state.chat_history):
+                    if message["role"] == "user":
+                        with st.chat_message("user"):
+                            st.write(f"**Q{i//2 + 1}:** {message['content']}")
+                    else:
+                        with st.chat_message("assistant"):
+                            st.write(f"**A{i//2 + 1}:** {message['content']}")
+                            
+                            # Show confidence and sources if available
+                            if "confidence" in message:
+                                confidence = message["confidence"]
+                                confidence_color = "green" if confidence > 0.7 else "orange" if confidence > 0.4 else "red"
+                                st.markdown(f"*Confidence: :{confidence_color}[{confidence:.1%}]*")
+                            
+                            if "sources" in message and message["sources"]:
+                                with st.expander(f"📑 View {len(message['sources'])} sources"):
+                                    for j, source in enumerate(message["sources"], 1):
+                                        st.write(f"**Source {j}** (Score: {source['score']:.3f})")
+                                        st.write(source["content"][:200] + "..." if len(source["content"]) > 200 else source["content"])
+                                        st.write("---")
+                            
+                            # Show debug info for troubleshooting
+                            if "processing_time" in message:
+                                st.caption(f"⏱️ Processing time: {message['processing_time']:.1f}s")
+            else:
+                st.info("💬 Start your conversation by asking a question about your legal documents below.")
+                
+                # Show current database status
+                stats = get_stats()
+                if stats and stats.get("total_documents", 0) > 0:
+                    st.success(f"📊 Knowledge base ready with {stats['total_documents']} documents")
+                else:
+                    st.warning("📋 No documents in knowledge base. Please upload documents first!")
+        
+        # Chat input section
+        st.markdown("---")
         
         # Query interface
         col1, col2 = st.columns([4, 1])
@@ -201,45 +338,80 @@ def main():
             query = st.text_area(
                 "Ask a question about your legal documents:",
                 placeholder="e.g., What are the termination clauses in the contract? What are the liability limitations?",
-                height=100
+                height=100,
+                key="query_input"
             )
         with col2:
             top_k = st.selectbox("Results to consider", [3, 5, 10, 15], index=1)
+            st.markdown("<br>", unsafe_allow_html=True)  # Add some spacing
         
-        if st.button("🔍 Ask Question", type="primary", disabled=not query.strip()):
-            if query.strip():
-                with st.spinner("Analyzing documents..."):
-                    result = query_documents(query, top_k)
+        # Check for pending query from example buttons
+        pending_query = st.session_state.get("pending_query", "")
+        actual_query = pending_query if pending_query else query
+        
+        # Ask button and processing
+        if st.button("🔍 Ask Question", type="primary", disabled=not actual_query.strip()) or pending_query:
+            if actual_query.strip():
+                # Clear pending query if it was used
+                if pending_query:
+                    st.session_state.pending_query = ""
+                # Add user message to chat history
+                st.session_state.chat_history.append({
+                    "role": "user",
+                    "content": actual_query.strip()
+                })
+                
+                # Create a progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                status_text.text("🔍 Searching relevant documents...")
+                progress_bar.progress(25)
+                
+                with st.spinner("Analyzing documents and generating detailed response..."):
+                    status_text.text("🤖 AI model analyzing legal content...")
+                    progress_bar.progress(50)
+                    
+                    start_time = time.time()
+                    # Get the actual model_id from the selected model key
+                    selected_model_id = AVAILABLE_MODELS[st.session_state.selected_model].model_id
+                    result = query_documents(actual_query.strip(), top_k, selected_model_id)
+                    end_time = time.time()
+                    
+                    progress_bar.progress(100)
+                    status_text.text(f"✅ Analysis complete! ({end_time - start_time:.1f}s)")
                     
                     if result:
-                        # Display answer
-                        st.subheader("💬 Answer")
-                        st.write(result.get("answer", "No answer generated"))
-                        
-                        # Display confidence
-                        confidence = result.get("confidence", 0)
-                        confidence_color = "green" if confidence > 0.7 else "orange" if confidence > 0.4 else "red"
-                        st.markdown(f"**Confidence:** :{confidence_color}[{confidence:.2f}]")
+                        # Add assistant response to chat history
+                        assistant_message = {
+                            "role": "assistant",
+                            "content": result.get("answer", "No answer generated"),
+                            "confidence": result.get("confidence", 0),
+                            "sources": result.get("sources", []),
+                            "model_info": result.get("model_info", {}),
+                            "processing_time": end_time - start_time
+                        }
+                        st.session_state.chat_history.append(assistant_message)
                         
                         # Warning for low confidence
+                        confidence = result.get("confidence", 0)
                         if confidence < settings.confidence_threshold:
                             st.warning("⚠️ Low confidence answer. Consider uploading more relevant documents or rephrasing your question.")
-                        
-                        # Display sources
-                        sources = result.get("sources", [])
-                        if sources:
-                            st.subheader("📑 Sources")
-                            for i, source in enumerate(sources):
-                                with st.expander(f"Source {i+1} (Score: {source['score']:.3f})"):
-                                    st.write(source["content"])
-                                    if source.get("metadata"):
-                                        st.json(source["metadata"])
-                        
-                        # Model info
-                        model_info = result.get("model_info", {})
-                        if model_info:
-                            with st.expander("🤖 Model Information"):
-                                st.json(model_info)
+                    else:
+                        # Add error message
+                        st.session_state.chat_history.append({
+                            "role": "assistant",
+                            "content": "❌ Sorry, I couldn't process your question. Please try again.",
+                            "confidence": 0,
+                            "sources": []
+                        })
+                    
+                    # Clear progress indicators and rerun to show updated chat
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # Rerun to show updated chat
+                    st.rerun()
         
         # Example queries
         st.subheader("💡 Example Questions")
@@ -254,43 +426,78 @@ def main():
             "What is the duration or term of this agreement?"
         ]
         
-        for example in example_queries:
-            if st.button(f"📝 {example}", key=f"example_{hash(example)}"):
-                st.session_state.example_query = example
-                st.rerun()
-        
-        # Auto-fill example query
-        if hasattr(st.session_state, 'example_query'):
-            st.text_area(
-                "Selected example:",
-                value=st.session_state.example_query,
-                height=50,
-                disabled=True
-            )
+        cols = st.columns(2)
+        for i, example in enumerate(example_queries):
+            with cols[i % 2]:
+                if st.button(f"📝 {example[:40]}...", key=f"example_{hash(example)}", help=example):
+                    # Store the example query in session state and trigger processing
+                    st.session_state.pending_query = example
+                    st.rerun()
     
     with tab3:
-        st.header("📈 Query History")
+        st.header("📈 Query History & Analytics")
         st.markdown("Review recent queries and their confidence scores.")
         
+        # Current session history
+        if st.session_state.chat_history:
+            st.subheader("📊 Current Session Analytics")
+            
+            # Calculate session stats
+            user_messages = [msg for msg in st.session_state.chat_history if msg["role"] == "user"]
+            assistant_messages = [msg for msg in st.session_state.chat_history if msg["role"] == "assistant" and "confidence" in msg]
+            
+            if assistant_messages:
+                avg_confidence = sum(msg["confidence"] for msg in assistant_messages) / len(assistant_messages)
+                avg_processing_time = sum(msg.get("processing_time", 0) for msg in assistant_messages) / len(assistant_messages)
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Questions Asked", len(user_messages))
+                with col2:
+                    st.metric("Avg Confidence", f"{avg_confidence:.1%}")
+                with col3:
+                    st.metric("Avg Response Time", f"{avg_processing_time:.1f}s")
+            
+            st.subheader("� Current Session Chat History")
+            for i in range(0, len(st.session_state.chat_history), 2):
+                if i + 1 < len(st.session_state.chat_history):
+                    user_msg = st.session_state.chat_history[i]
+                    assistant_msg = st.session_state.chat_history[i + 1]
+                    
+                    with st.expander(f"Q{i//2 + 1}: {user_msg['content'][:80]}..."):
+                        st.write("**Question:**")
+                        st.write(user_msg['content'])
+                        st.write("**Answer:**")
+                        st.write(assistant_msg['content'])
+                        
+                        if "confidence" in assistant_msg:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Confidence", f"{assistant_msg['confidence']:.1%}")
+                            with col2:
+                                st.metric("Sources", len(assistant_msg.get('sources', [])))
+        
+        # API-level query history
+        st.subheader("🌐 Recent API Queries")
         queries = get_recent_queries()
         
         if queries:
-            for i, query_data in enumerate(reversed(queries)):
-                with st.expander(f"Query {len(queries)-i}: {query_data['question'][:100]}..."):
+            for i, query_data in enumerate(reversed(queries[-10:])):  # Show last 10
+                with st.expander(f"API Query {len(queries)-i}: {query_data['question'][:80]}..."):
                     col1, col2 = st.columns(2)
                     
                     with col1:
                         st.write("**Question:**")
                         st.write(query_data["question"])
                         st.write("**Answer:**")
-                        st.write(query_data["answer"])
+                        st.write(query_data["answer"][:300] + "..." if len(query_data["answer"]) > 300 else query_data["answer"])
                     
                     with col2:
                         st.metric("Confidence", f"{query_data['confidence']:.2f}")
                         st.metric("Sources Used", query_data["sources_count"])
                         st.write(f"**Model:** {query_data['model']}")
         else:
-            st.info("No queries yet. Upload documents and start asking questions!")
+            st.info("No API queries yet. Upload documents and start asking questions!")
 
 
 if __name__ == "__main__":

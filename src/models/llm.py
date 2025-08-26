@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 import openai
 from src.core.config import settings
 from src.utils.logging import app_logger
+from src.models.model_manager import get_model_manager
 
 
 class BaseLLM(ABC):
@@ -270,17 +271,19 @@ class HuggingFaceLLM(BaseLLM):
                 with torch.no_grad():
                     outputs = self.model.generate(
                         input_ids,
-                        max_new_tokens=min(self.max_tokens, 2048),
-                        min_length=50,  # Ensure minimum response length
+                        max_new_tokens=min(self.max_tokens, 2048),  # Balanced for quality and speed
+                        min_length=100,  # Ensure detailed response but faster than 150
                         temperature=self.temperature,
                         do_sample=True,
-                        top_p=0.9,  # Use nucleus sampling for better quality
-                        top_k=50,   # Limit vocabulary for coherence
+                        top_p=0.92,  # Slightly reduced for faster generation
+                        top_k=80,   # Reduced for faster processing
                         pad_token_id=self.tokenizer.pad_token_id,
                         eos_token_id=self.tokenizer.eos_token_id,
-                        repetition_penalty=1.2,  # Reduce repetition
-                        length_penalty=1.0,      # Encourage longer responses
-                        no_repeat_ngram_size=3   # Avoid repetitive n-grams
+                        repetition_penalty=1.1,  # Balanced setting
+                        length_penalty=1.2,      # Encourage longer responses but not too long
+                        no_repeat_ngram_size=2,  # Allow legal terminology repetition
+                        early_stopping=False,    # Don't stop early
+                        num_beams=1             # Use greedy search for speed
                     )
                 
                 # Decode the response
@@ -381,33 +384,46 @@ class HuggingFaceLLM(BaseLLM):
         # Create a legal-specific prompt template
         if "t5" in self.model_name.lower():
             # T5 models work better with detailed task-specific prompts
-            return f"""You are an expert legal document analyzer. Provide a comprehensive analysis of the legal document based on the context provided.
+            return f"""You are an expert legal document analyzer with 20+ years of experience. Provide a comprehensive, detailed analysis of the legal document based on the context provided.
 
 Context from legal documents:
 {context_text}
 
 Question: {prompt}
 
-Please provide a detailed analysis that includes:
-1. Key terms and conditions mentioned
-2. Important clauses and their implications
-3. Specific legal provisions
-4. Relevant sections or paragraphs
-5. Any potential risks or considerations
+Please provide a thorough, detailed analysis that includes:
 
-Detailed answer:"""
+1. **Key Terms and Conditions**: List and explain all important terms, conditions, and provisions mentioned
+2. **Important Clauses Analysis**: Analyze significant clauses and their legal implications in detail
+3. **Specific Legal Provisions**: Identify and explain specific legal provisions, rights, and obligations
+4. **Relevant Sections**: Quote and analyze relevant sections or paragraphs with explanations
+5. **Legal Risks and Considerations**: Identify potential risks, limitations, or important considerations
+6. **Practical Implications**: Explain what these terms mean in practical, real-world terms
+7. **Additional Context**: Provide any additional legal context or background that would be helpful
+
+Structure your response with clear headings and detailed explanations. Be thorough and comprehensive in your analysis. Provide specific examples and explanations rather than brief summaries.
+
+Comprehensive Legal Analysis:"""
         else:
-            # Standard prompt for other models
-            return f"""<s>[INST] You are an expert legal document analyzer. Based on the provided legal document context, answer the question accurately and professionally.
+            # Enhanced prompt for other models
+            return f"""<s>[INST] You are an expert legal document analyzer with extensive experience in contract law. Based on the provided legal document context, provide a comprehensive, detailed analysis that thoroughly addresses the question.
 
 Context from legal documents:
 {context_text}
 
 Question: {prompt}
 
-Please provide a detailed answer based only on the information in the context. If the context doesn't contain enough information, state that clearly. [/INST]
+Please provide a detailed, thorough analysis that includes:
+- Complete explanation of all relevant terms and conditions
+- Detailed analysis of important clauses and their implications
+- Specific legal provisions and their meanings
+- Potential risks and considerations
+- Practical implications for the parties involved
+- Any additional relevant legal context
 
-Answer: """
+Be comprehensive and detailed in your response. Provide specific examples and thorough explanations rather than brief summaries. Structure your analysis clearly with detailed explanations for each point. [/INST]
+
+Detailed Legal Analysis: """
 
 
 class LlamaLLM(BaseLLM):
@@ -498,33 +514,99 @@ Context: {context_text}
 Question: {prompt} [/INST]"""
 
 
+class CachedModelLLM(BaseLLM):
+    """LLM implementation using pre-cached models from ModelManager."""
+    
+    def __init__(self):
+        """Initialize with the model manager."""
+        self.model_manager = get_model_manager()
+        app_logger.info("Initialized CachedModelLLM with ModelManager")
+    
+    def generate_response(self, prompt: str, context: List[str], model_name: str = None) -> Dict[str, Any]:
+        """Generate response using cached models."""
+        try:
+            # Use model manager to generate response
+            result = self.model_manager.generate_response(prompt, context, model_name)
+            
+            # Add query to result for tracking
+            result["query"] = prompt
+            
+            return result
+            
+        except Exception as e:
+            app_logger.error(f"Error in CachedModelLLM: {str(e)}")
+            return {
+                "answer": "I apologize, but I encountered an error while processing your question. Please try again.",
+                "confidence": 0.0,
+                "query": prompt,
+                "model": model_name or "unknown",
+                "tokens_used": 0
+            }
+    
+    def calculate_confidence(self, response: str, context: List[str]) -> float:
+        """Calculate confidence score for the response."""
+        # Basic confidence calculation based on response length and context relevance
+        if len(response.strip()) < 10:
+            return 0.1
+        
+        # Higher confidence for longer, more detailed responses
+        length_score = min(0.5, len(response) / 200)
+        
+        # Check for context relevance (simple keyword matching)
+        context_keywords = set()
+        for ctx in context:
+            context_keywords.update(ctx.lower().split()[:50])  # First 50 words per context
+        
+        response_words = set(response.lower().split())
+        relevance_score = len(context_keywords.intersection(response_words)) / max(len(context_keywords), 1)
+        relevance_score = min(0.4, relevance_score * 0.4)
+        
+        # Base confidence
+        base_confidence = 0.1
+        
+        return min(0.95, base_confidence + length_score + relevance_score)
+
+
 class LLMFactory:
     """Factory class for creating LLM instances."""
     
     @staticmethod
-    def create_llm(llm_type: str = None) -> BaseLLM:
+    def create_llm(llm_type: str = None, model_name: str = None, use_api: bool = None) -> BaseLLM:
         """Create an LLM instance based on configuration."""
         if llm_type is None:
             llm_type = settings.default_llm
         
-        if llm_type.lower() == "openai":
+        # Always use cached model approach for better performance
+        if llm_type.lower() in ["huggingface", "cached"]:
+            return CachedModelLLM()
+        elif llm_type.lower() == "openai":
             return OpenAILLM()
         elif llm_type.lower() == "llama":
             return LlamaLLM()
-        elif llm_type.lower() == "huggingface":
-            model_name = getattr(settings, 'hf_model_name', 'microsoft/DialoGPT-medium')
-            use_api = getattr(settings, 'hf_use_inference_api', True)
-            return HuggingFaceLLM(model_name=model_name, use_inference_api=use_api)
         else:
-            raise ValueError(f"Unsupported LLM type: {llm_type}")
+            # Default to cached model approach
+            app_logger.info(f"Unknown LLM type {llm_type}, defaulting to CachedModelLLM")
+            return CachedModelLLM()
 
 
 # Global LLM instance - will be created when first accessed
 _llm_instance = None
+_current_model_name = None
 
-def get_llm():
-    """Get the global LLM instance, creating it if necessary."""
-    global _llm_instance
-    if _llm_instance is None:
-        _llm_instance = LLMFactory.create_llm()
+def get_llm(model_name: str = None, use_api: bool = None):
+    """Get the global LLM instance, creating it if necessary or if model changed."""
+    global _llm_instance, _current_model_name
+    
+    # Always use cached model approach now
+    if _llm_instance is None or not isinstance(_llm_instance, CachedModelLLM):
+        app_logger.info("Creating CachedModelLLM instance")
+        _llm_instance = CachedModelLLM()
+        _current_model_name = model_name
+    
     return _llm_instance
+
+def clear_llm_cache():
+    """Clear the cached LLM instance to force reload."""
+    global _llm_instance, _current_model_name
+    _llm_instance = None
+    _current_model_name = None

@@ -87,16 +87,26 @@ class RAGPipeline:
             app_logger.error(f"Error in add_documents: {str(e)}")
             raise
     
-    def query(self, question: str, top_k: int = 5) -> Dict[str, Any]:
+    def query(self, question: str, top_k: int = 5, model_name: str = None) -> Dict[str, Any]:
         """Query the knowledge base and generate an answer."""
         try:
             app_logger.info(f"Processing query: {question[:100]}...")
+            
+            # Import here to avoid circular imports
+            from src.models.llm import get_llm
+            
+            # Get LLM instance (potentially different model)
+            if model_name:
+                app_logger.info(f"Using model: {model_name}")
+                llm = get_llm(model_name=model_name)
+            else:
+                llm = self.llm
             
             # Retrieve relevant documents
             search_results = self.vector_db.search(
                 query=question,
                 k=top_k,
-                score_threshold=0.3
+                score_threshold=0.1  # Lowered threshold for better recall
             )
             
             if not search_results:
@@ -104,14 +114,23 @@ class RAGPipeline:
                     "answer": "I don't have enough information in the provided documents to answer your question.",
                     "confidence": 0.0,
                     "sources": [],
-                    "query": question
+                    "query": question,
+                    "model_info": {
+                        "model": model_name or "no_model_used",
+                        "tokens_used": 0
+                    }
                 }
             
             # Extract context from search results
             context = [result["content"] for result in search_results]
             
             # Generate answer using LLM
-            llm_response = self.llm.generate_response(question, context)
+            if hasattr(llm, 'generate_response') and 'model_name' in llm.generate_response.__code__.co_varnames:
+                # New CachedModelLLM supports model_name parameter
+                llm_response = llm.generate_response(question, context, model_name)
+            else:
+                # Fallback for older LLM implementations
+                llm_response = llm.generate_response(question, context)
             
             # Prepare sources
             sources = []
@@ -128,7 +147,7 @@ class RAGPipeline:
                 "answer": llm_response["answer"],
                 "confidence": llm_response["confidence"],
                 "sources_count": len(sources),
-                "model": llm_response.get("model", "unknown")
+                "model": model_name or llm_response.get("model", "unknown")
             }
             self.query_history.append(query_log)
             
@@ -141,7 +160,7 @@ class RAGPipeline:
                 "sources": sources,
                 "query": question,
                 "model_info": {
-                    "model": llm_response.get("model", "unknown"),
+                    "model": model_name or llm_response.get("model", "unknown"),
                     "tokens_used": llm_response.get("tokens_used", 0)
                 }
             }

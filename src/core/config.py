@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     max_tokens: int = Field(2048, env="MAX_TOKENS")
     
     # Hugging Face Configuration
-    hf_model_name: str = Field("google/flan-t5-base", env="HF_MODEL_NAME")
-    hf_use_inference_api: bool = Field(False, env="HF_USE_INFERENCE_API")
+    hf_model_name: str = Field("mistralai/Mistral-7B-Instruct-v0.3", env="HF_MODEL_NAME")
+    hf_use_inference_api: bool = Field(True, env="HF_USE_INFERENCE_API")
     
     # API Configuration
     api_host: str = Field("localhost", env="API_HOST")

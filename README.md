@@ -17,7 +17,7 @@ An advanced AI-powered system for analyzing legal documents using Retrieval-Augm
 
 ### 🔍 **Intelligent Search & Analysis**
 - **RAG Pipeline**: Retrieval-Augmented Generation for context-aware responses
-- **Semantic Search**: FAISS vector database for similarity matching
+- **Semantic Search**: ChromaDB vector database for similarity matching
 - **Multi-model Support**: Google Flan-T5, OpenAI GPT-4, and Hugging Face models
 - **Confidence Scoring**: Real-time confidence metrics for each response
 
@@ -45,7 +45,7 @@ An advanced AI-powered system for analyzing legal documents using Retrieval-Augm
 graph TB
     A[Streamlit Frontend] --> B[FastAPI Backend]
     B --> C[RAG Pipeline]
-    C --> D[Vector Database<br/>FAISS]
+    C --> D[Vector Database<br/>ChromaDB]
     C --> E[LLM Engine<br/>T5/GPT-4]
     C --> F[Document Processor]
     D --> G[Embeddings<br/>SentenceTransformer]
@@ -209,7 +209,7 @@ Legal-Document-Assistant/
 │   │   └── main.py            # Legacy API server
 │   ├── core/                   # Core system components
 │   │   ├── rag.py             # RAG pipeline implementation
-│   │   ├── vector_db.py       # FAISS vector database
+│   │   ├── vector_db.py       # ChromaDB vector database
 │   │   └── config.py          # Configuration management
 │   ├── data/                   # Data processing utilities
 │   │   └── processor.py       # Document processing logic
@@ -397,7 +397,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - **Hugging Face** for providing the T5 model and transformers library
 - **OpenAI** for GPT-4 API integration
-- **Facebook Research** for FAISS vector database
+- **ChromaDB Team** for ChromaDB vector database
 - **Streamlit** for the interactive web interface
 - **FastAPI** for the high-performance API framework
 - **WandB** for experiment tracking and monitoring

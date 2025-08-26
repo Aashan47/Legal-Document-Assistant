@@ -17,7 +17,7 @@ The Legal Document Analyzer is a comprehensive RAG (Retrieval-Augmented Generati
   - Query history and analytics
 
 #### Vector Database (`vector_db.py`)
-- **Technology**: FAISS (Facebook AI Similarity Search)
+- **Technology**: ChromaDB (Open-source vector database)
 - **Purpose**: Stores and retrieves document embeddings
 - **Features**:
   - Semantic similarity search
@@ -134,7 +134,7 @@ The Legal Document Analyzer is a comprehensive RAG (Retrieval-Augmented Generati
 - **Sentence Transformers**: Text embeddings
 
 ### Vector Database
-- **FAISS**: Vector similarity search
+- **ChromaDB**: Vector similarity search
 - **NumPy**: Numerical operations
 
 ### LLM Integration
@@ -201,7 +201,7 @@ The Legal Document Analyzer is a comprehensive RAG (Retrieval-Augmented Generati
 ## Performance Optimization
 
 ### 1. Vector Search
-- FAISS optimization for fast similarity search
+- ChromaDB optimization for fast similarity search
 - Batch processing for large document sets
 - Configurable embedding dimensions
 

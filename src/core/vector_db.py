@@ -1,11 +1,11 @@
 """
-Vector database management using FAISS for semantic search.
+Vector database management using ChromaDB for semantic search.
 """
 import os
-import pickle
+import uuid
 from typing import List, Dict, Any, Optional, Tuple
-import numpy as np
-import faiss
+import chromadb
+from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from langchain.schema import Document
 from src.core.config import settings
@@ -13,20 +13,39 @@ from src.utils.logging import app_logger
 
 
 class VectorDatabase:
-    """FAISS-based vector database for document embeddings."""
+    """ChromaDB-based vector database for document embeddings."""
     
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self.model_name = model_name
         self.embedding_model = SentenceTransformer(model_name)
-        self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
         
-        # Initialize FAISS index
-        self.index = faiss.IndexFlatIP(self.embedding_dim)  # Inner product for cosine similarity
-        self.documents = []  # Store document metadata
-        self.embeddings = []  # Store embeddings for reconstruction
+        # Initialize ChromaDB client
+        chromadb_path = os.path.join(settings.vector_db_path, "chromadb")
+        os.makedirs(chromadb_path, exist_ok=True)
         
-        # Load existing index if available
-        self._load_index()
+        # Configure ChromaDB with persistent storage
+        self.chroma_client = chromadb.PersistentClient(
+            path=chromadb_path,
+            settings=Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
+        
+        # Create or get collection
+        self.collection_name = "legal_documents"
+        try:
+            self.collection = self.chroma_client.get_collection(
+                name=self.collection_name
+            )
+            app_logger.info(f"Loaded existing ChromaDB collection with {self.collection.count()} documents")
+        except Exception:
+            # Create new collection if it doesn't exist
+            self.collection = self.chroma_client.create_collection(
+                name=self.collection_name,
+                metadata={"description": "Legal document embeddings"}
+            )
+            app_logger.info("Created new ChromaDB collection")
     
     def add_documents(self, documents: List[Document]) -> None:
         """Add documents to the vector database."""
@@ -34,27 +53,39 @@ class VectorDatabase:
             if not documents:
                 return
             
-            # Extract text content
-            texts = [doc.page_content for doc in documents]
+            # Prepare data for ChromaDB
+            ids = []
+            texts = []
+            metadatas = []
             
-            # Generate embeddings
-            app_logger.info(f"Generating embeddings for {len(texts)} documents...")
-            embeddings = self.embedding_model.encode(texts, convert_to_numpy=True)
+            for i, doc in enumerate(documents):
+                # Generate unique ID for each document chunk
+                doc_id = str(uuid.uuid4())
+                ids.append(doc_id)
+                texts.append(doc.page_content)
+                
+                # Prepare metadata (ChromaDB requires string values)
+                metadata = {}
+                for key, value in doc.metadata.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        metadata[key] = str(value)
+                    else:
+                        metadata[key] = str(value)
+                
+                # Add chunk index for tracking
+                metadata["chunk_index"] = str(i)
+                metadatas.append(metadata)
             
-            # Normalize embeddings for cosine similarity
-            faiss.normalize_L2(embeddings)
+            app_logger.info(f"Adding {len(documents)} documents to ChromaDB...")
             
-            # Add to FAISS index
-            self.index.add(embeddings)
+            # Add documents to collection (ChromaDB will automatically generate embeddings)
+            self.collection.add(
+                ids=ids,
+                documents=texts,
+                metadatas=metadatas
+            )
             
-            # Store documents and embeddings
-            self.documents.extend(documents)
-            self.embeddings.extend(embeddings.tolist())
-            
-            app_logger.info(f"Added {len(documents)} documents to vector database")
-            
-            # Save updated index
-            self._save_index()
+            app_logger.info(f"Successfully added {len(documents)} documents to vector database")
             
         except Exception as e:
             app_logger.error(f"Error adding documents to vector database: {str(e)}")
@@ -63,31 +94,50 @@ class VectorDatabase:
     def search(self, query: str, k: int = 5, score_threshold: float = 0.5) -> List[Dict[str, Any]]:
         """Search for similar documents given a query."""
         try:
-            if self.index.ntotal == 0:
+            # Check if collection has documents
+            collection_count = self.collection.count()
+            if collection_count == 0:
                 app_logger.warning("Vector database is empty")
                 return []
             
-            # Generate query embedding
-            query_embedding = self.embedding_model.encode([query], convert_to_numpy=True)
-            faiss.normalize_L2(query_embedding)
+            app_logger.info(f"Searching ChromaDB collection with {collection_count} documents")
             
-            # Search in FAISS index
-            scores, indices = self.index.search(query_embedding, k)
+            # Query the collection
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=min(k, collection_count),
+                include=["documents", "metadatas", "distances"]
+            )
             
             # Format results
-            results = []
-            for score, idx in zip(scores[0], indices[0]):
-                if idx != -1 and score >= score_threshold:  # Valid index and above threshold
-                    result = {
-                        "document": self.documents[idx],
-                        "score": float(score),
-                        "content": self.documents[idx].page_content,
-                        "metadata": self.documents[idx].metadata
-                    }
-                    results.append(result)
+            formatted_results = []
+            if results['documents'] and results['documents'][0]:
+                for i, (doc_text, metadata, distance) in enumerate(zip(
+                    results['documents'][0],
+                    results['metadatas'][0],
+                    results['distances'][0]
+                )):
+                    # Convert distance to similarity score (ChromaDB uses cosine distance)
+                    # Lower distance = higher similarity
+                    similarity_score = 1.0 - distance
+                    
+                    if similarity_score >= score_threshold:
+                        # Create a Document object for compatibility
+                        document = Document(
+                            page_content=doc_text,
+                            metadata=metadata
+                        )
+                        
+                        result = {
+                            "document": document,
+                            "score": float(similarity_score),
+                            "content": doc_text,
+                            "metadata": metadata
+                        }
+                        formatted_results.append(result)
             
-            app_logger.info(f"Found {len(results)} relevant documents for query")
-            return results
+            app_logger.info(f"Found {len(formatted_results)} relevant documents for query")
+            return formatted_results
             
         except Exception as e:
             app_logger.error(f"Error searching vector database: {str(e)}")
@@ -95,71 +145,43 @@ class VectorDatabase:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics."""
-        return {
-            "total_documents": len(self.documents),
-            "embedding_dimension": self.embedding_dim,
-            "model_name": self.model_name,
-            "index_size": self.index.ntotal
-        }
+        try:
+            collection_count = self.collection.count()
+            return {
+                "total_documents": collection_count,
+                "embedding_dimension": self.embedding_model.get_sentence_embedding_dimension(),
+                "model_name": self.model_name,
+                "index_size": collection_count,
+                "collection_name": self.collection_name
+            }
+        except Exception as e:
+            app_logger.error(f"Error getting database stats: {str(e)}")
+            return {
+                "total_documents": 0,
+                "embedding_dimension": 0,
+                "model_name": self.model_name,
+                "index_size": 0,
+                "collection_name": self.collection_name
+            }
     
     def clear(self) -> None:
         """Clear all documents from the database."""
-        self.index = faiss.IndexFlatIP(self.embedding_dim)
-        self.documents = []
-        self.embeddings = []
-        self._save_index()
-        app_logger.info("Vector database cleared")
-    
-    def _save_index(self) -> None:
-        """Save the FAISS index and metadata to disk."""
         try:
-            os.makedirs(settings.vector_db_path, exist_ok=True)
+            # Delete the existing collection
+            try:
+                self.chroma_client.delete_collection(name=self.collection_name)
+                app_logger.info("Deleted existing ChromaDB collection")
+            except Exception:
+                pass  # Collection might not exist
             
-            # Save FAISS index
-            index_path = os.path.join(settings.vector_db_path, "faiss.index")
-            faiss.write_index(self.index, index_path)
+            # Create a new empty collection
+            self.collection = self.chroma_client.create_collection(
+                name=self.collection_name,
+                metadata={"description": "Legal document embeddings"}
+            )
             
-            # Save documents metadata
-            docs_path = os.path.join(settings.vector_db_path, "documents.pkl")
-            with open(docs_path, 'wb') as f:
-                pickle.dump(self.documents, f)
-            
-            # Save embeddings
-            embeddings_path = os.path.join(settings.vector_db_path, "embeddings.pkl")
-            with open(embeddings_path, 'wb') as f:
-                pickle.dump(self.embeddings, f)
-            
-            app_logger.debug("Vector database saved to disk")
+            app_logger.info("Vector database cleared")
             
         except Exception as e:
-            app_logger.error(f"Error saving vector database: {str(e)}")
-    
-    def _load_index(self) -> None:
-        """Load the FAISS index and metadata from disk."""
-        try:
-            index_path = os.path.join(settings.vector_db_path, "faiss.index")
-            docs_path = os.path.join(settings.vector_db_path, "documents.pkl")
-            embeddings_path = os.path.join(settings.vector_db_path, "embeddings.pkl")
-            
-            if all(os.path.exists(path) for path in [index_path, docs_path, embeddings_path]):
-                # Load FAISS index
-                self.index = faiss.read_index(index_path)
-                
-                # Load documents
-                with open(docs_path, 'rb') as f:
-                    self.documents = pickle.load(f)
-                
-                # Load embeddings
-                with open(embeddings_path, 'rb') as f:
-                    self.embeddings = pickle.load(f)
-                
-                app_logger.info(f"Loaded vector database with {len(self.documents)} documents")
-            else:
-                app_logger.info("No existing vector database found, starting fresh")
-                
-        except Exception as e:
-            app_logger.warning(f"Error loading vector database: {str(e)}")
-            # Initialize empty database on error
-            self.index = faiss.IndexFlatIP(self.embedding_dim)
-            self.documents = []
-            self.embeddings = []
+            app_logger.error(f"Error clearing vector database: {str(e)}")
+            raise

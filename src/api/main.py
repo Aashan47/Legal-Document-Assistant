@@ -20,6 +20,7 @@ from src.utils.logging import app_logger
 class QueryRequest(BaseModel):
     question: str
     top_k: Optional[int] = 5
+    model_name: Optional[str] = None
 
 
 class QueryResponse(BaseModel):
@@ -74,6 +75,21 @@ async def startup_event():
     app_logger.info(f"Vector DB path: {settings.vector_db_path}")
     app_logger.info(f"Upload path: {settings.upload_path}")
     app_logger.info(f"Default LLM: {settings.default_llm}")
+    
+    # Initialize model cache in background
+    try:
+        from src.models.model_manager import get_model_manager
+        manager = get_model_manager()
+        cache_info = manager.get_cache_info()
+        app_logger.info(f"Model cache status: {cache_info['total_cached']}/{cache_info['total_available']} models cached")
+        
+        if cache_info['total_cached'] == 0:
+            app_logger.info("No models cached. Consider running 'python manage_models.py preload' to pre-cache models for faster switching.")
+        else:
+            app_logger.info("Model cache initialized successfully")
+            
+    except Exception as e:
+        app_logger.warning(f"Model cache initialization warning: {e}")
 
 
 @app.get("/")
@@ -169,10 +185,34 @@ async def query_documents(request: QueryRequest):
         if not request.question.strip():
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
+        # Log the request
+        app_logger.info(f"Received query request: {request.question[:100]}...")
+        
+        # Check database stats before query
+        stats = rag_pipeline.get_database_stats()
+        app_logger.info(f"Database stats before query: {stats['total_documents']} documents")
+        
+        if stats['total_documents'] == 0:
+            app_logger.warning("No documents in database")
+            return QueryResponse(
+                answer="I don't have any documents in my knowledge base. Please upload some legal documents first.",
+                confidence=0.0,
+                sources=[],
+                query=request.question,
+                model_info={
+                    "model": "no_documents",
+                    "tokens_used": 0
+                }
+            )
+        
         result = rag_pipeline.query(
             question=request.question,
-            top_k=request.top_k
+            top_k=request.top_k,
+            model_name=request.model_name
         )
+        
+        # Log the result
+        app_logger.info(f"Query completed: {len(result.get('sources', []))} sources found, confidence: {result.get('confidence', 0):.2f}")
         
         return QueryResponse(**result)
         

@@ -21,7 +21,7 @@ def check_dependencies():
     """Check if required dependencies are installed."""
     required_packages = [
         "fastapi", "uvicorn", "streamlit", "torch", "transformers",
-        "sentence-transformers", "faiss-cpu", "langchain", "openai"
+        "sentence-transformers", "chromadb", "langchain", "openai"
     ]
     
     missing_packages = []
@@ -77,22 +77,25 @@ def start_api_server():
             "--reload"
         ])
         
-        # Wait a moment for server to start
-        time.sleep(3)
+        # Wait longer for server to start (ChromaDB and ML models need time)
+        print("⏳ Waiting for server to initialize (this may take 30-60 seconds)...")
+        for i in range(12):  # Wait up to 60 seconds
+            time.sleep(5)
+            try:
+                import requests
+                response = requests.get("http://localhost:8000/health", timeout=10)
+                if response.status_code == 200:
+                    print("✅ API server is running at http://localhost:8000")
+                    print("✅ Health check passed")
+                    return process
+            except requests.exceptions.RequestException:
+                print(f"⏳ Still starting... ({(i+1)*5}s)")
+                continue
         
-        # Check if server is running
-        try:
-            import requests
-            response = requests.get("http://localhost:8000/health", timeout=5)
-            if response.status_code == 200:
-                print("✅ API server is running at http://localhost:8000")
-                return process
-            else:
-                print("❌ API server failed to start properly")
-                return None
-        except:
-            print("❌ API server is not responding")
-            return None
+        print("❌ API server failed to start within 60 seconds")
+        if process:
+            process.terminate()
+        return None
             
     except Exception as e:
         print(f"❌ Failed to start API server: {str(e)}")

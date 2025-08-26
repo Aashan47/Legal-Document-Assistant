@@ -25,16 +25,10 @@ except ImportError as e:
     print(f"❌ Sentence Transformers import failed: {e}")
 
 try:
-    import faiss
-    print("✅ FAISS imported successfully")
+    import chromadb
+    print("✅ ChromaDB imported successfully")
 except ImportError as e:
-    print(f"❌ FAISS import failed: {e}")
-    print("Trying alternative import...")
-    try:
-        import faiss_cpu as faiss
-        print("✅ FAISS-CPU imported successfully")
-    except ImportError as e2:
-        print(f"❌ FAISS-CPU import also failed: {e2}")
+    print(f"❌ ChromaDB import failed: {e}")
 
 try:
     import transformers
